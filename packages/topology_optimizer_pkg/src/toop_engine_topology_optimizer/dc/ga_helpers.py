@@ -10,7 +10,6 @@
 import time
 from copy import deepcopy
 from dataclasses import dataclass
-from functools import partial
 
 import jax
 from average import EWMA
@@ -38,65 +37,6 @@ class MixingEmitterState(EmitterState):
 
 class TrackingMixingEmitter(MixingEmitter):
     """A MixingEmitter that tracks the number of branch and injection combinations and splits."""
-
-    @partial(
-        jax.jit,
-        static_argnames=("self",),
-    )
-    def emit(
-        self,
-        repertoire: Repertoire | DiscreteMapElitesRepertoire,
-        emitter_state: Optional[EmitterState],  # noqa: ARG002
-        random_key: PRNGKeyArray,
-    ) -> tuple[Genotype, ExtraScores, PRNGKeyArray]:
-        """Emit a batch of genotypes and track the number of branch and injection combinations and splits.
-
-        Taken from qdax 0.4.1
-
-        Emitter that performs both mutation and variation. Two batches of
-        variation_percentage * batch_size genotypes are sampled in the repertoire,
-        copied and cross-over to obtain new offsprings. One batch of
-        (1.0 - variation_percentage) * batch_size genotypes are sampled in the
-        repertoire, copied and mutated.
-
-        Note: this emitter has no state. A fake none state must be added
-        through a function redefinition to make this emitter usable with MAP-Elites.
-
-        Params:
-            repertoire: the MAP-Elites repertoire to sample from
-            emitter_state: void
-            random_key: a jax PRNG random key
-
-        Returns
-        -------
-            a batch of offsprings
-            a new jax PRNG key
-        """
-        n_variation = int(self._batch_size * self._variation_percentage)
-        n_mutation = self._batch_size - n_variation
-
-        if n_variation > 0:
-            x1, random_key = repertoire.sample(random_key, n_variation)
-            x2, random_key = repertoire.sample(random_key, n_variation)
-
-            x_variation, random_key = self._variation_fn(x1, x2, random_key)
-
-        if n_mutation > 0:
-            x1, random_key = repertoire.sample(random_key, n_mutation)
-            x_mutation, random_key = self._mutation_fn(x1, random_key)
-
-        if n_variation == 0:
-            genotypes = x_mutation
-        elif n_mutation == 0:
-            genotypes = x_variation
-        else:
-            genotypes = jax.tree_util.tree_map(
-                lambda x_1, x_2: jnp.concatenate([x_1, x_2], axis=0),
-                x_variation,
-                x_mutation,
-            )
-
-        return genotypes, {}, random_key
 
     def init(
         self,
@@ -180,7 +120,7 @@ def init_running_means(n_outages: int, n_devices: int) -> RunningMeans:
     )
 
 
-def update_running_means(running_means: RunningMeans, emitter_state: EmitterState) -> RunningMeans:
+def update_running_means(running_means: RunningMeans, emitter_state: EmitterState, type_of_emitter: str) -> RunningMeans:
     """Aggregate the emitter state statistics into the running means.
 
     Parameters
@@ -189,6 +129,7 @@ def update_running_means(running_means: RunningMeans, emitter_state: EmitterStat
         The running means to be updated
     emitter_state : EmitterState
         The emitter state of the current iteration
+    type_of_emitter: 'Mixing' or 'BruteForce
 
     Returns
     -------
@@ -201,10 +142,20 @@ def update_running_means(running_means: RunningMeans, emitter_state: EmitterStat
     last_emitter_state = (
         running_means.last_emitter_state
         if running_means.last_emitter_state is not None
-        else MixingEmitterState(
-            total_branch_combis=jnp.array(0, dtype=int),
-            total_inj_combis=jnp.array(0, dtype=int),
-            total_num_splits=jnp.array(0, dtype=int),
+        else (
+            MixingEmitterState(
+                total_branch_combis=jnp.array(0, dtype=int),
+                total_inj_combis=jnp.array(0, dtype=int),
+                total_num_splits=jnp.array(0, dtype=int)
+            )
+            # Removed because of circular imports
+            #if type_of_emitter == "Mixing"
+            #else BruteForceEmitterState(
+            #    total_branch_combis=jnp.array(0, dtype=int),
+            #    total_inj_combis=jnp.array(0, dtype=int),
+            #    total_num_splits=jnp.array(0, dtype=int),
+            #    genotypes=emitter_state.genotypes
+            #)            
         )
     )
 
